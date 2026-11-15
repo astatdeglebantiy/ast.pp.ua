@@ -296,3 +296,58 @@ button.danger:hover {
   color: var(--text-primary);
   margin: 0 0 6px;
 }
+
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  background-color: var(--bg-input);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  margin: 0;
+}
+
+.tab-btn.active {
+  background-color: var(--ink-white);
+  color: var(--ink-black);
+  border-color: var(--ink-white);
+}
+
+.invite-list {
+  margin-top: 12px;
+}
+
+.invite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.invite-row:last-child {
+  border-bottom: none;
+}
+
+.invite-code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.invite-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-xs {
+  width: auto;
+  margin: 0;
+  padding: 5px 10px;
+  font-size: 12px;
+}

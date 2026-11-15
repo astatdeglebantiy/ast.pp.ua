@@ -18,6 +18,17 @@ class UserRecord(msgspec.Struct):
     id: bytes
     username: str
     password_hash: str
+    is_admin: bool = False
+
+
+class InviteRecord(msgspec.Struct):
+    code: str
+    created_by: str
+    created_ms: int
+    expires_ms: int
+    max_uses: int = 1
+    uses_count: int = 0
+    used_by: list[str] = msgspec.field(default_factory=list)
 
 
 class MessageRecord(msgspec.Struct):
@@ -35,6 +46,7 @@ class MessageRecord(msgspec.Struct):
 class MailboxFlags(msgspec.Struct, array_like=True):
     folder: int          # 0 = inbox, 1 = sent
     is_read: bool = False
+
 
 class SessionRecord(msgspec.Struct):
     username: str

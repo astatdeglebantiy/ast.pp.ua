@@ -27,16 +27,22 @@
 
   <!-- Authentication view -->
   <section id="authView" class="card">
-    <h3>Sign in or Create Mailbox</h3>
+    <div class="auth-tabs">
+      <button type="button" id="tabLogin" class="tab-btn active">Sign In</button>
+      <button type="button" id="tabRegister" class="tab-btn">Create @ast.pp.ua</button>
+    </div>
+
     <input id="authUser" placeholder="Username (e.g. me)" autocomplete="username" />
     <div class="pw-wrap">
       <input id="authPass" type="password" placeholder="Password (min 4 chars)" autocomplete="current-password" />
       <button type="button" class="toggle-pw" data-target="authPass">Show</button>
     </div>
-    <div class="row">
-      <button id="btnLogin">Sign In</button>
-      <button id="btnRegister" class="sec">Create @ast.pp.ua</button>
+
+    <div id="inviteFieldWrap" class="hidden">
+      <input id="authInvite" placeholder="Invite code (e.g. AST-1A2B-3C4D)" autocomplete="off" />
     </div>
+
+    <button id="btnAuthSubmit">Sign In</button>
     <div id="authErr" class="status"></div>
   </section>
 
@@ -67,10 +73,21 @@
         <img id="accountAvatar" alt="" class="avatar-lg" />
         <div>
           <div id="accountAddr" class="account-addr"></div>
-          <div class="muted">Active cookie session</div>
+          <div id="accountRole" class="muted">Active cookie session</div>
         </div>
       </div>
       <button id="btnLogout" class="sec">Sign Out</button>
+
+      <!-- Admin Invite Management -->
+      <div id="adminInvitesBox" class="hidden">
+        <hr class="sep" />
+        <h4>Admin: Invite Codes</h4>
+        <div class="row">
+          <input id="invMaxUses" type="number" min="1" max="100" value="1" placeholder="Max uses" style="max-width:140px" />
+          <button id="btnCreateInvite">Generate Invite Code</button>
+        </div>
+        <div id="inviteList" class="invite-list"></div>
+      </div>
 
       <hr class="sep" />
       <h4 class="danger-title">Danger Zone: Delete Mailbox</h4>

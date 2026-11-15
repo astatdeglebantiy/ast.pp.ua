@@ -57,7 +57,9 @@ const escapeHtml = (s) =>
 
 // --- Client state ---
 let ws = null;
-let currentUser = null; // { address, username }
+let currentUser = null; // { address, username, is_admin }
+let authMode = "login"; // "login" | "register"
+let inviteRequired = true;
 let inboxItems = [];
 let sentItems = [];
 
@@ -68,6 +70,28 @@ function updateTabTitle(route = "inbox") {
   }
   const label = ROUTE_TITLES[route] || "Mail";
   document.title = `${currentUser.address} · ${label} — ast.pp.ua`;
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  document.getElementById("tabLogin").classList.toggle("active", mode === "login");
+  document.getElementById("tabRegister").classList.toggle("active", mode === "register");
+  document.getElementById("inviteFieldWrap").classList.toggle("hidden", !(mode === "register" && inviteRequired));
+  document.getElementById("btnAuthSubmit").textContent = mode === "login" ? "Sign In" : "Create Mailbox";
+  document.getElementById("authErr").textContent = "";
+}
+
+async function refreshAuthInfo() {
+  try {
+    const res = await fetch("/api/auth/info");
+    if (res.ok) {
+      const info = await res.json();
+      inviteRequired = Boolean(info.invite_required);
+      setAuthMode(authMode);
+    }
+  } catch {
+    // Ignore transient errors
+  }
 }
 
 function renderFolder(containerId, items, emptyText) {
@@ -101,6 +125,52 @@ function renderAllMail() {
   renderFolder("sentList", sentItems, "No sent messages yet.");
 }
 
+async function loadInvites() {
+  if (!currentUser || !currentUser.is_admin) return;
+  const res = await fetch("/api/admin/invites");
+  if (!res.ok) return;
+  const data = await res.json();
+  const listEl = document.getElementById("inviteList");
+  if (!data.invites.length) {
+    listEl.innerHTML = `<p class="muted">No invite codes generated yet.</p>`;
+    return;
+  }
+  listEl.innerHTML = data.invites.map((inv) => {
+    const usedText = inv.used_by.length ? ` · used by: ${escapeHtml(inv.used_by.join(", "))}` : "";
+    const status = inv.is_expired ? "Expired" : `${inv.uses_count}/${inv.max_uses} used${usedText}`;
+    return `
+      <div class="invite-row">
+        <div>
+          <div class="invite-code">${escapeHtml(inv.code)}</div>
+          <div class="muted">${status}</div>
+        </div>
+        <div class="invite-actions">
+          <button type="button" class="sec btn-xs copy-inv" data-code="${escapeHtml(inv.code)}">Copy</button>
+          <button type="button" class="danger btn-xs revoke-inv" data-code="${escapeHtml(inv.code)}">Revoke</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  listEl.querySelectorAll(".copy-inv").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(btn.dataset.code);
+      btn.textContent = "Copied";
+      setTimeout(() => { btn.textContent = "Copy"; }, 1200);
+    });
+  });
+  listEl.querySelectorAll(".revoke-inv").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await fetch("/api/admin/invites/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: btn.dataset.code }),
+      });
+      await loadInvites();
+    });
+  });
+}
+
 function showRoute() {
   if (!currentUser) return;
   const raw = location.hash.replace(/^#\/?/, "");
@@ -114,6 +184,9 @@ function showRoute() {
     a.classList.toggle("active", a.dataset.route === route);
   });
   updateTabTitle(route);
+  if (route === "account" && currentUser.is_admin) {
+    loadInvites();
+  }
 }
 
 function enterSignedOutState(statusMsg = "") {
@@ -129,13 +202,16 @@ function enterSignedOutState(statusMsg = "") {
     history.replaceState(null, "", "/");
   }
   updateTabTitle();
+  refreshAuthInfo();
 
   document.getElementById("userPill").classList.add("hidden");
   document.getElementById("me").textContent = "";
   document.getElementById("navBar").classList.add("hidden");
   document.getElementById("appView").classList.add("hidden");
+  document.getElementById("adminInvitesBox").classList.add("hidden");
   document.getElementById("authView").classList.remove("hidden");
   document.getElementById("authPass").value = "";
+  document.getElementById("authInvite").value = "";
   document.getElementById("delPass").value = "";
   document.getElementById("delStatus").textContent = "";
   document.getElementById("sendStatus").textContent = "";
@@ -149,6 +225,9 @@ function enterSignedInState(user) {
   document.getElementById("accountAvatar").src = avatarUrl;
   document.getElementById("me").textContent = user.address;
   document.getElementById("accountAddr").textContent = user.address;
+  document.getElementById("accountRole").textContent = user.is_admin ? "Admin · Active cookie session" : "Active cookie session";
+  document.getElementById("adminInvitesBox").classList.toggle("hidden", !user.is_admin);
+
   document.getElementById("userPill").classList.remove("hidden");
   document.getElementById("authView").classList.add("hidden");
   document.getElementById("navBar").classList.remove("hidden");
@@ -188,15 +267,16 @@ function enterSignedInState(user) {
   };
 }
 
-async function doAuth(action) {
+async function submitAuth() {
   document.getElementById("authErr").textContent = "";
   const res = await fetch("/api/auth", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      action,
+      action: authMode,
       username: document.getElementById("authUser").value,
       password: document.getElementById("authPass").value,
+      invite_code: document.getElementById("authInvite").value,
     }),
   });
   const data = await res.json();
@@ -257,10 +337,21 @@ document.querySelectorAll(".toggle-pw").forEach((btn) => {
   });
 });
 
-document.getElementById("btnLogin").addEventListener("click", () => doAuth("login"));
-document.getElementById("btnRegister").addEventListener("click", () => doAuth("register"));
+document.getElementById("tabLogin").addEventListener("click", () => setAuthMode("login"));
+document.getElementById("tabRegister").addEventListener("click", () => setAuthMode("register"));
+document.getElementById("btnAuthSubmit").addEventListener("click", submitAuth);
 document.getElementById("btnLogout").addEventListener("click", logout);
 document.getElementById("btnDeleteAccount").addEventListener("click", deleteMailbox);
+
+document.getElementById("btnCreateInvite").addEventListener("click", async () => {
+  const maxUses = parseInt(document.getElementById("invMaxUses").value || "1", 10);
+  await fetch("/api/admin/invites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ max_uses: maxUses }),
+  });
+  await loadInvites();
+});
 
 document.getElementById("btnSend").addEventListener("click", () => {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -275,6 +366,7 @@ document.getElementById("btnSend").addEventListener("click", () => {
 window.addEventListener("hashchange", showRoute);
 
 // Restore session automatically from HttpOnly cookie on load
+refreshAuthInfo();
 fetch("/api/me")
   .then((res) => (res.ok ? res.json() : null))
   .then((user) => {

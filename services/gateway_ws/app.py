@@ -10,17 +10,23 @@ import time
 
 from litestar import Litestar, MediaType, Request, Response, WebSocket, get, post, websocket
 from litestar.datastructures import State
-from litestar.exceptions import ClientException, NotAuthorizedException, WebSocketDisconnect
+from litestar.exceptions import (
+    ClientException,
+    NotAuthorizedException,
+    PermissionDeniedException,
+    WebSocketDisconnect,
+)
 from litestar.static_files import create_static_files_router
 import msgspec
 
 from astmail_proto.framing import FrameError, MsgType, pack_frame, unpack_frame
 from services.core_store.engine import BinaryStore
-from services.core_store.models import MessageRecord, UserRecord, new_uuid7_bytes
+from services.core_store.models import InviteRecord, MessageRecord, UserRecord, new_uuid7_bytes
 from services.gateway_ws.avatar import ensure_brand_favicon, generate_user_avatar_svg
 
 WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 DOMAIN = "ast.pp.ua"
+ADMIN_USERNAME = os.environ.get("ASTMAIL_ADMIN_USER", "me").lower()
 SESSION_COOKIE = "astmail_session"
 SESSION_TTL_SECONDS = 7 * 86400
 
@@ -30,10 +36,20 @@ class AuthRequest(msgspec.Struct):
     action: str  # "login" | "register"
     username: str
     password: str
+    invite_code: str = ""
 
 
 class DeleteAccountRequest(msgspec.Struct):
     password: str
+
+
+class CreateInviteRequest(msgspec.Struct):
+    max_uses: int = 1
+    ttl_hours: int = 168
+
+
+class RevokeInviteRequest(msgspec.Struct):
+    code: str
 
 
 class SendMailCmd(msgspec.Struct):
@@ -62,7 +78,7 @@ class AckPayload(msgspec.Struct):
     message: str
 
 
-# --- Password hashing and DTO conversion ---
+# --- Helpers ---
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
@@ -82,6 +98,31 @@ def is_https_request(request: Request) -> bool:
     )
 
 
+def is_user_admin(user: UserRecord) -> bool:
+    return user.is_admin or user.username == ADMIN_USERNAME
+
+
+def require_session_user(request: Request, store: BinaryStore) -> UserRecord:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    username = store.get_session_username(token)
+    user = store.get_user(username) if username else None
+    if not user:
+        raise NotAuthorizedException("Not signed in")
+    return user
+
+
+def serialize_invite(inv: InviteRecord, now_ms: int) -> dict:
+    return {
+        "code": inv.code,
+        "created_by": inv.created_by,
+        "uses_count": inv.uses_count,
+        "max_uses": inv.max_uses,
+        "used_by": inv.used_by,
+        "expires_ms": inv.expires_ms,
+        "is_expired": now_ms > inv.expires_ms,
+    }
+
+
 def to_wire(msg: MessageRecord, folder: str) -> WireMessage:
     return WireMessage(
         id=msg.id.hex(),
@@ -92,6 +133,14 @@ def to_wire(msg: MessageRecord, folder: str) -> WireMessage:
         body=msg.body_bytes.decode("utf-8", errors="replace"),
         created_ms=msg.created_ms,
     )
+
+
+async def _safe_close_sockets(sockets: list[WebSocket]) -> None:
+    for ws in sockets:
+        try:
+            await ws.close(code=4002, reason="Mailbox deleted")
+        except Exception:
+            pass
 
 
 # --- Application lifecycle ---
@@ -107,8 +156,13 @@ async def app_lifespan(app: Litestar):
         app.state.store.close()
 
 
+@get("/api/auth/info")
+async def auth_info(state: State) -> dict[str, bool]:
+    return {"invite_required": state.store.has_any_users()}
+
+
 @post("/api/auth")
-async def auth(data: AuthRequest, request: Request, state: State) -> Response[dict[str, str]]:
+async def auth(data: AuthRequest, request: Request, state: State) -> Response[dict]:
     username = data.username.strip().lower().split("@")[0]
     if not username or not username.isalnum():
         raise ClientException("Username must be alphanumeric")
@@ -117,13 +171,13 @@ async def auth(data: AuthRequest, request: Request, state: State) -> Response[di
 
     store: BinaryStore = state.store
     if data.action == "register":
-        user = UserRecord(
+        candidate = UserRecord(
             id=new_uuid7_bytes(),
             username=username,
             password_hash=hash_password(data.password),
         )
         try:
-            store.create_user(user)
+            user = store.register_with_invite(candidate, data.invite_code)
         except ValueError as err:
             raise ClientException(str(err))
     else:
@@ -135,7 +189,11 @@ async def auth(data: AuthRequest, request: Request, state: State) -> Response[di
     store.create_session(token, username, ttl_seconds=SESSION_TTL_SECONDS)
 
     resp = Response(
-        content={"address": f"{username}@{DOMAIN}", "username": username},
+        content={
+            "address": f"{username}@{DOMAIN}",
+            "username": username,
+            "is_admin": is_user_admin(user),
+        },
         media_type=MediaType.JSON,
     )
     resp.set_cookie(
@@ -151,22 +209,13 @@ async def auth(data: AuthRequest, request: Request, state: State) -> Response[di
 
 
 @get("/api/me")
-async def current_session(request: Request, state: State) -> dict[str, str]:
-    token = request.cookies.get(SESSION_COOKIE, "")
-    store: BinaryStore = state.store
-    username = store.get_session_username(token)
-    user = store.get_user(username) if username else None
-    if not user:
-        raise NotAuthorizedException("Not signed in")
-    return {"address": f"{user.username}@{DOMAIN}", "username": user.username}
-
-
-async def _safe_close_sockets(sockets: list[WebSocket]) -> None:
-    for ws in sockets:
-        try:
-            await ws.close(code=4002, reason="Mailbox deleted")
-        except Exception:
-            pass
+async def current_session(request: Request, state: State) -> dict:
+    user = require_session_user(request, state.store)
+    return {
+        "address": f"{user.username}@{DOMAIN}",
+        "username": user.username,
+        "is_admin": is_user_admin(user),
+    }
 
 
 @post("/api/logout")
@@ -182,18 +231,13 @@ async def logout(request: Request, state: State) -> Response[dict[str, str]]:
 async def delete_account(
     data: DeleteAccountRequest, request: Request, state: State
 ) -> Response[dict[str, str]]:
-    token = request.cookies.get(SESSION_COOKIE, "")
     store: BinaryStore = state.store
-    username = store.get_session_username(token)
-    if not username:
-        raise NotAuthorizedException("Invalid or expired session")
-
-    user = store.get_user(username)
-    if not user or not verify_password(data.password, user.password_hash):
+    user = require_session_user(request, store)
+    if not verify_password(data.password, user.password_hash):
         raise ClientException("Incorrect password")
 
-    deleted_uid = store.delete_user(username)
-    store.delete_user_sessions(username)
+    deleted_uid = store.delete_user(user.username)
+    store.delete_user_sessions(user.username)
 
     if deleted_uid:
         sockets_to_close = list(state.sockets.pop(deleted_uid, ()))
@@ -201,11 +245,49 @@ async def delete_account(
             asyncio.create_task(_safe_close_sockets(sockets_to_close))
 
     resp = Response(
-        content={"status": "deleted", "username": username},
+        content={"status": "deleted", "username": user.username},
         media_type=MediaType.JSON,
     )
     resp.delete_cookie(key=SESSION_COOKIE, path="/")
     return resp
+
+
+# --- Admin Invite Management ---
+@get("/api/admin/invites")
+async def list_invites(request: Request, state: State) -> dict[str, list[dict]]:
+    store: BinaryStore = state.store
+    user = require_session_user(request, store)
+    if not is_user_admin(user):
+        raise PermissionDeniedException("Admin access required")
+
+    now_ms = int(time.time() * 1000)
+    return {"invites": [serialize_invite(inv, now_ms) for inv in store.list_invites()]}
+
+
+@post("/api/admin/invites")
+async def create_invite(data: CreateInviteRequest, request: Request, state: State) -> dict:
+    store: BinaryStore = state.store
+    user = require_session_user(request, store)
+    if not is_user_admin(user):
+        raise PermissionDeniedException("Admin access required")
+
+    inv = store.create_invite(
+        created_by=user.username,
+        max_uses=min(max(1, data.max_uses), 100),
+        ttl_hours=min(max(1, data.ttl_hours), 8760),
+    )
+    now_ms = int(time.time() * 1000)
+    return serialize_invite(inv, now_ms)
+
+
+@post("/api/admin/invites/revoke")
+async def revoke_invite(data: RevokeInviteRequest, request: Request, state: State) -> dict[str, bool]:
+    store: BinaryStore = state.store
+    user = require_session_user(request, store)
+    if not is_user_admin(user):
+        raise PermissionDeniedException("Admin access required")
+
+    return {"revoked": store.revoke_invite(data.code)}
 
 
 @get("/api/avatar/{username:str}")
@@ -235,7 +317,6 @@ async def astp_ws(socket: WebSocket) -> None:
     state.sockets[user.id].add(socket)
 
     try:
-        # 1. Push initial inbox and sent history on connect (SYNC_DELTA)
         inbox = [to_wire(m, "inbox") for m in store.list_folder(user.id, folder=0)]
         sent = [to_wire(m, "sent") for m in store.list_folder(user.id, folder=1)]
         sync_frame = pack_frame(
@@ -244,7 +325,6 @@ async def astp_ws(socket: WebSocket) -> None:
         )
         await socket.send_bytes(sync_frame)
 
-        # 2. Process incoming binary ASTP frames from the client
         while True:
             raw = await socket.receive_bytes()
             try:
@@ -317,10 +397,14 @@ async def astp_ws(socket: WebSocket) -> None:
 
 app = Litestar(
     route_handlers=[
+        auth_info,
         auth,
         current_session,
         logout,
         delete_account,
+        list_invites,
+        create_invite,
+        revoke_invite,
         user_avatar,
         astp_ws,
         create_static_files_router(path="/", directories=[WEB_DIR], html_mode=True),
