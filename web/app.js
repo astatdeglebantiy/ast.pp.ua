@@ -1,5 +1,29 @@
 import { encode, decode } from "https://cdn.jsdelivr.net/npm/@msgpack/msgpack@3/+esm";
 
+import {
+  initializeIdentityRewards,
+  showIdentityRewards,
+  clearIdentityRewards,
+} from "./identity-rewards.js?v=2";
+
+import {
+  initializeIdentityAliases,
+  refreshIdentityAliases,
+  clearIdentityAliases,
+} from "./identity-aliases.js?v=3";
+
+import {
+  initializePrimaryEmail,
+  refreshPrimaryEmail,
+  clearPrimaryEmail,
+} from "./primary-email.js?v=1";
+
+import {
+  initializeOutboundAdmin,
+  refreshOutboundAdmin,
+  clearOutboundAdmin,
+} from "./outbound-admin.js?v=9";
+
 const MSG_SEND = 0x02;
 const MSG_ACK = 0x05;
 const MSG_SYNC = 0x07;
@@ -63,6 +87,77 @@ let inviteRequired = true;
 let inboxItems = [];
 let sentItems = [];
 
+const outboundStatuses = new Map();
+
+const OUTBOUND_STATUS_LABELS = Object.freeze({
+  local: "Local",
+  queued: "Queued",
+  sending: "Sending",
+  retry: "Retry scheduled",
+  accepted: "Accepted by SMTP",
+  failed: "Failed",
+  unknown: "Delivery uncertain",
+  cancelled: "Cancelled",
+});
+
+let outboundStatusRequest = 0;
+
+function isSentRoute() {
+  return location.hash === "#/sent";
+}
+
+function renderMailStatus(message) {
+  if (message.folder !== "sent") return "";
+
+  const status = outboundStatuses.get(message.id);
+
+  if (!status) {
+    return `<span class="mail-status mail-status-pending">Checking…</span>`;
+  }
+
+  const label = OUTBOUND_STATUS_LABELS[status.status] ?? "Unknown";
+
+  const cssClass = [
+    "local",
+    "queued",
+    "sending",
+    "retry",
+    "accepted",
+    "failed",
+    "unknown",
+  ].includes(status.status)
+    ? status.status
+    : "unknown";
+
+  return `
+    <span class="mail-status mail-status-${cssClass}"
+          title="SMTP attempts: ${Number(status.attempts) || 0}">
+      ${label}
+    </span>
+  `;
+}
+
+function renderCancelButton(message) {
+  if (message.folder !== "sent") return "";
+
+  const delivery = outboundStatuses.get(message.id);
+
+  if (
+    !delivery ||
+    !["queued", "retry"].includes(delivery.status)
+  ) {
+    return "";
+  }
+
+  return `
+    <button
+      type="button"
+      class="mail-cancel-btn"
+      data-id="${escapeHtml(String(message.id))}"
+    >Cancel</button>
+  `;
+}
+
 function updateTabTitle(route = "inbox") {
   if (!currentUser) {
     document.title = "ast.pp.ua — Mail";
@@ -94,23 +189,40 @@ async function refreshAuthInfo() {
   }
 }
 
+
 function renderFolder(containerId, items, emptyText) {
   const container = document.getElementById(containerId);
+
   if (!items.length) {
     container.innerHTML = `<p class="muted">${emptyText}</p>`;
     return;
   }
+
   container.innerHTML = items.map((m) => {
     const time = new Date(m.created_ms).toLocaleTimeString();
-    const peer = m.folder === "inbox" ? m.sender : m.recipients[0];
-    const who = m.folder === "inbox" ? `From: ${escapeHtml(m.sender)}` : `To: ${escapeHtml(m.recipients.join(", "))}`;
-    const avatarUrl = `/api/avatar/${encodeURIComponent(peer.split("@")[0])}`;
+    const peer = m.folder === "inbox"
+      ? m.sender
+      : m.recipients[0];
+
+    const who = m.folder === "inbox"
+      ? `From: ${escapeHtml(m.sender)}`
+      : `To: ${escapeHtml(m.recipients.join(", "))}`;
+
+    const avatarUrl =
+      `/api/avatar/${encodeURIComponent(peer.split("@")[0])}`;
+
     return `
       <div class="mail-item">
         <img class="mail-avatar" src="${avatarUrl}" alt="" />
         <div class="mail-content">
           <div class="mail-meta">${who} · ${time}</div>
-          <div><strong>${escapeHtml(m.subject)}</strong></div>
+
+          <div class="mail-subject-line">
+            <strong>${escapeHtml(m.subject)}</strong>
+            ${renderMailStatus(m)}
+            ${renderCancelButton(m)}
+          </div>
+
           <div class="mail-body">${escapeHtml(m.body)}</div>
         </div>
       </div>
@@ -118,11 +230,79 @@ function renderFolder(containerId, items, emptyText) {
   }).join("");
 }
 
+
 function renderAllMail() {
   document.getElementById("inboxCount").textContent = String(inboxItems.length);
   document.getElementById("sentCount").textContent = String(sentItems.length);
   renderFolder("inboxList", inboxItems, "No incoming messages yet.");
   renderFolder("sentList", sentItems, "No sent messages yet.");
+}
+
+async function refreshOutboundStatuses() {
+  if (!currentUser || !isSentRoute()) return;
+
+  const user = currentUser;
+  const requestId = ++outboundStatusRequest;
+
+  try {
+    const response = await fetch(
+      "/api/mail/outbound/status",
+      {
+        credentials: "same-origin",
+        cache: "no-store",
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Ignore results from an old session, route,
+    // or a superseded request.
+    if (
+      requestId !== outboundStatusRequest ||
+      currentUser !== user ||
+      !isSentRoute()
+    ) {
+      return;
+    }
+
+    if (!Array.isArray(data.messages)) {
+      throw new Error("Invalid status response");
+    }
+
+    outboundStatuses.clear();
+
+    for (const item of data.messages) {
+      if (typeof item.id !== "string") continue;
+
+      outboundStatuses.set(item.id, {
+        status: item.status,
+        attempts: item.attempts,
+        nextAttemptMs: item.next_attempt_ms,
+      });
+    }
+
+    renderFolder(
+      "sentList",
+      sentItems,
+      "No sent messages yet."
+    );
+
+  } catch (error) {
+    if (
+      requestId === outboundStatusRequest &&
+      currentUser === user &&
+      isSentRoute()
+    ) {
+      console.warn(
+        "ASTMail outbound status refresh failed:",
+        error
+      );
+    }
+  }
 }
 
 async function loadInvites() {
@@ -184,8 +364,27 @@ function showRoute() {
     a.classList.toggle("active", a.dataset.route === route);
   });
   updateTabTitle(route);
-  if (route === "account" && currentUser.is_admin) {
-    loadInvites();
+  if (route === "account") {
+  initializeIdentityAliases();
+  initializePrimaryEmail();
+
+  void refreshIdentityAliases();
+  void refreshPrimaryEmail();
+
+  if (currentUser.is_admin) {
+    void loadInvites();
+
+    initializeIdentityRewards();
+    showIdentityRewards();
+
+    initializeOutboundAdmin();
+    void refreshOutboundAdmin();
+  }
+}
+  if (route === "sent") {
+    void refreshOutboundStatuses();
+  } else {
+    ++outboundStatusRequest;
   }
 }
 
@@ -198,6 +397,11 @@ function enterSignedOutState(statusMsg = "") {
   currentUser = null;
   inboxItems = [];
   sentItems = [];
+  clearOutboundAdmin();
+  clearIdentityAliases();
+  clearPrimaryEmail();
+  outboundStatuses.clear();
+  ++outboundStatusRequest;
   if (location.hash) {
     history.replaceState(null, "", "/");
   }
@@ -220,6 +424,9 @@ function enterSignedOutState(statusMsg = "") {
 
 function enterSignedInState(user) {
   currentUser = user;
+  if (!user.is_admin) {
+    clearIdentityRewards();
+  }
   const avatarUrl = `/api/avatar/${encodeURIComponent(user.username)}`;
   document.getElementById("userAvatar").src = avatarUrl;
   document.getElementById("accountAvatar").src = avatarUrl;
@@ -238,25 +445,47 @@ function enterSignedInState(user) {
   ws = new WebSocket(`${proto}${location.host}/v1/ws`);
   ws.binaryType = "arraybuffer";
 
+
   ws.onmessage = (ev) => {
     const { msgType, payload } = unpackFrame(ev.data);
     const obj = decode(payload);
+
     if (msgType === MSG_SYNC) {
       inboxItems = obj.inbox;
       sentItems = obj.sent;
+
       renderAllMail();
+
+      // Refresh delivery statuses when Sent is open.
+      if (isSentRoute()) {
+        void refreshOutboundStatuses();
+      }
+
     } else if (msgType === MSG_SEND) {
-      if (obj.folder === "inbox") inboxItems.unshift(obj);
-      else sentItems.unshift(obj);
+      if (obj.folder === "inbox") {
+        inboxItems.unshift(obj);
+      } else {
+        sentItems.unshift(obj);
+      }
+
       renderAllMail();
+
+      // Update status for newly queued outgoing mail.
+      if (obj.folder === "sent" && isSentRoute()) {
+        void refreshOutboundStatuses();
+      }
+
     } else if (msgType === MSG_ACK) {
-      document.getElementById("sendStatus").textContent = obj.message;
+      const statusEl = document.getElementById("sendStatus");
+      statusEl.textContent = obj.message;
+
       if (obj.ok) {
         document.getElementById("subj").value = "";
         document.getElementById("body").value = "";
       }
     }
   };
+
 
   ws.onclose = (ev) => {
     if (ev.code === 4001 || ev.code === 4002) {
@@ -328,6 +557,70 @@ async function deleteMailbox() {
 }
 
 // --- Event bindings ---
+
+document.getElementById("sentList").addEventListener(
+  "click",
+  async (event) => {
+    const button = event.target.closest(".mail-cancel-btn");
+
+    if (!button || button.disabled) return;
+
+    const messageId = button.dataset.id;
+
+    if (!confirm("Cancel this outgoing email?")) {
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = "Cancelling…";
+
+    try {
+      const response = await fetch(
+        "/api/mail/outbound/cancel",
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            id: messageId,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json()
+          .catch(() => ({}));
+
+        throw new Error(
+          error.detail || `HTTP ${response.status}`
+        );
+      }
+
+      // Immediately reflect the confirmed cancellation.
+      outboundStatuses.set(messageId, {
+        status: "cancelled",
+        attempts: 0,
+        nextAttemptMs: 0,
+      });
+
+      renderFolder(
+        "sentList",
+        sentItems,
+        "No sent messages yet."
+      );
+
+      void refreshOutboundStatuses();
+
+    } catch (error) {
+      alert(`Cancellation failed: ${error.message}`);
+      button.disabled = false;
+      button.textContent = "Cancel";
+    }
+  }
+);
+
 document.querySelectorAll(".toggle-pw").forEach((btn) => {
   btn.addEventListener("click", () => {
     const input = document.getElementById(btn.dataset.target);
@@ -374,3 +667,12 @@ fetch("/api/me")
     else updateTabTitle();
   })
   .catch(() => updateTabTitle());
+setInterval(() => {
+  if (
+    currentUser &&
+    isSentRoute() &&
+    document.visibilityState === "visible"
+  ) {
+    void refreshOutboundStatuses();
+  }
+}, 15_000);

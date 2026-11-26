@@ -351,3 +351,683 @@ button.danger:hover {
   padding: 5px 10px;
   font-size: 12px;
 }
+
+
+/* ASTMail outbound delivery status */
+
+.mail-subject-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mail-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #aaa;
+  background: #000;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.mail-status-local,
+.mail-status-accepted {
+  color: #fff;
+  border-color: #777;
+}
+
+.mail-status-queued,
+.mail-status-sending,
+.mail-status-retry,
+.mail-status-pending {
+  color: #999;
+  border-color: #333;
+}
+
+.mail-status-failed,
+.mail-status-unknown {
+  color: #fff;
+  border-color: #aaa;
+  border-style: dashed;
+}
+
+/* ASTMail outbound administration */
+
+.outbound-admin-panel {
+  margin: 24px 0 0;
+  padding: 22px 0 0;
+  background: transparent;
+  color: var(--text-primary);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: none;
+}
+
+.outbound-admin-panel[hidden] {
+  display: none !important;
+}
+
+/* Header */
+
+.outbound-admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.outbound-admin-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.outbound-admin-header button {
+  width: auto;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+}
+
+.outbound-admin-header button:hover {
+  background: var(--bg-hover);
+}
+
+/* Summary cards */
+
+.outbound-admin-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.outbound-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 15px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--bg-input);
+}
+
+.outbound-metric-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.outbound-metric-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Queue items */
+
+.outbound-admin-list {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.outbound-admin-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.outbound-admin-item:last-child {
+  border-bottom: none;
+}
+
+.outbound-admin-info {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.outbound-admin-info strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.outbound-admin-muted {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.outbound-admin-actions > .mail-status {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 3px 8px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+/* SMTP error details */
+
+.outbound-admin-error {
+  margin-top: 10px;
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Responsive */
+
+@media (max-width: 600px) {
+  .outbound-admin-panel {
+    margin: 20px 0;
+    padding: 18px 0;
+  }
+
+  .outbound-admin-summary {
+    gap: 6px;
+  }
+
+  .outbound-metric {
+    padding: 11px 10px;
+  }
+
+  .outbound-metric-value {
+    font-size: 19px;
+  }
+
+  .outbound-admin-item {
+    gap: 10px;
+  }
+}
+
+
+/* Outbound queue controls */
+
+.outbound-admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.outbound-admin-actions .mail-status {
+  margin: 0;
+}
+
+.outbound-cancel-button {
+  width: auto;
+  margin: 0;
+  padding: 4px 9px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.outbound-cancel-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.outbound-cancel-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .outbound-admin-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
+.mail-status-cancelled {
+  color: var(--text-muted);
+  border-style: dashed;
+}
+
+/* User outbound cancellation */
+
+.mail-cancel-btn {
+  width: auto;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.mail-cancel-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.mail-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+/* ASTMail — Automatic outbound delivery */
+
+.outbound-delivery-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+}
+
+.outbound-delivery-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.outbound-delivery-info strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.outbound-delivery-info .outbound-admin-muted {
+  margin: 0;
+}
+
+.outbound-delivery-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.outbound-delivery-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.outbound-delivery-button {
+  width: auto;
+  margin: 0;
+  padding: 7px 11px;
+  font-size: 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.outbound-delivery-button.delivery-enabled {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.outbound-delivery-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 600px) {
+  .outbound-delivery-control {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .outbound-delivery-actions {
+    justify-content: space-between;
+  }
+}
+
+.identity-alias-panel {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.identity-alias-panel[hidden] {
+  display: none;
+}
+
+.identity-alias-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.identity-alias-header h3 {
+  margin: 0 0 6px;
+}
+
+.identity-alias-muted {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+.identity-alias-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.identity-alias-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+}
+
+.identity-alias-metric strong {
+  font-size: 23px;
+  color: var(--text-primary);
+}
+
+.identity-alias-metric span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.identity-alias-list {
+  margin-bottom: 16px;
+}
+
+.identity-alias-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.identity-alias-name {
+  overflow-wrap: anywhere;
+}
+
+.identity-alias-form {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.identity-alias-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 10px 12px;
+}
+
+.identity-alias-input:disabled {
+  opacity: 0.5;
+}
+
+.identity-alias-feedback {
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-top: 12px;
+}
+
+.identity-alias-feedback:empty {
+  display: none;
+}
+
+.identity-alias-feedback.identity-error {
+  color: #ef8888;
+}
+
+@media (max-width: 480px) {
+  .identity-alias-form {
+    flex-wrap: wrap;
+  }
+}
+
+/* --- Alias Rewards --- */
+
+.identity-rewards-panel {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.identity-rewards-panel[hidden] {
+  display: none;
+}
+
+.identity-rewards-header {
+  margin-bottom: 20px;
+}
+
+.identity-rewards-header h3 {
+  margin: 0 0 6px;
+}
+
+.identity-rewards-muted {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.identity-rewards-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.identity-rewards-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.identity-rewards-field > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.identity-rewards-field input,
+.identity-rewards-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.identity-rewards-field textarea {
+  resize: vertical;
+  min-height: 78px;
+}
+
+.identity-rewards-field input:focus,
+.identity-rewards-field textarea:focus {
+  outline: none;
+  border-color: var(--text-secondary);
+}
+
+.identity-rewards-submit {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 0 18px;
+}
+
+.identity-rewards-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.identity-rewards-feedback {
+  margin: 14px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.identity-rewards-feedback:empty {
+  display: none;
+}
+
+.identity-rewards-feedback.identity-reward-error {
+  color: #ef8888;
+}
+
+/* --- Primary Email --- */
+
+.primary-email-panel {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.primary-email-panel[hidden],
+.primary-email-form[hidden] {
+  display: none;
+}
+
+.primary-email-header {
+  margin-bottom: 18px;
+}
+
+.primary-email-header h3 {
+  margin: 0;
+}
+
+.primary-email-address {
+  display: block;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+  margin-bottom: 8px;
+}
+
+.primary-email-muted {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+
+.primary-email-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.primary-email-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.primary-email-field > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.primary-email-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.primary-email-field input:focus {
+  outline: none;
+  border-color: var(--text-secondary);
+}
+
+.primary-email-submit {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 0 18px;
+}
+
+.primary-email-submit:disabled,
+.primary-email-field input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.primary-email-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.primary-email-pending:empty {
+  display: none;
+}
+
+.primary-email-feedback {
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.primary-email-feedback:empty {
+  display: none;
+}
+
+.primary-email-error {
+  color: #ef8888;
+}
