@@ -311,8 +311,9 @@ async def auth(data: AuthRequest, request: Request, state: State) -> Response[di
 
     resp = Response(
         content={
-            "address": f"{username}@{DOMAIN}",
-            "username": username,
+            "id": user.id.hex(),
+            "address": f"{user.username}@{DOMAIN}",
+            "username": user.username,
             "is_admin": is_user_admin(user),
         },
         media_type=MediaType.JSON,
@@ -332,7 +333,9 @@ async def auth(data: AuthRequest, request: Request, state: State) -> Response[di
 @get("/api/me")
 async def current_session(request: Request, state: State) -> dict:
     user = require_session_user(request, state.store)
+
     return {
+        "id": user.id.hex(),
         "address": f"{user.username}@{DOMAIN}",
         "username": user.username,
         "is_admin": is_user_admin(user),

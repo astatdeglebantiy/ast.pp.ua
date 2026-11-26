@@ -87,6 +87,85 @@ let inviteRequired = true;
 let inboxItems = [];
 let sentItems = [];
 
+let cacheDb = null;
+let cacheReady = Promise.resolve(null);
+let cacheShutdown = Promise.resolve();
+let mailboxEpoch = 0;
+let pendingCacheWrites = Promise.resolve();
+
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let hasServerData = false;
+
+function queueCacheWrite(epoch, operation) {
+  const job = pendingCacheWrites
+    .catch(() => {})
+    .then(async () => {
+      const db = await cacheReady;
+
+      if (!db || epoch !== mailboxEpoch) return;
+
+      await operation(db);
+    });
+
+  pendingCacheWrites = job.catch(error => {
+    console.warn("ASTMail cache write failed:", error);
+  });
+
+  return pendingCacheWrites;
+}
+
+function cancelReconnect() {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect(epoch) {
+  if (epoch !== mailboxEpoch || !currentUser) return;
+
+  cancelReconnect();
+
+  if (!navigator.onLine) {
+    console.info("ASTMail offline; waiting for network");
+    return;
+  }
+
+  const base = Math.min(
+    30_000,
+    500 * 2 ** Math.min(reconnectAttempt++, 6)
+  );
+
+  const delay = Math.floor(
+    base * (0.8 + Math.random() * 0.4)
+  );
+
+  console.info(`ASTMail reconnect in ${delay}ms`);
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+
+    if (epoch === mailboxEpoch && currentUser) {
+      connectMailboxSocket(epoch);
+    }
+  }, delay);
+}
+
+window.addEventListener("online", () => {
+  if (!currentUser || !navigator.onLine) return;
+
+  const epoch = mailboxEpoch;
+  cancelReconnect();
+
+  if (!ws ||
+      (ws.readyState !== WebSocket.OPEN &&
+       ws.readyState !== WebSocket.CONNECTING)) {
+    reconnectAttempt = 0;
+    connectMailboxSocket(epoch);
+  }
+});
+
 const outboundStatuses = new Map();
 
 const OUTBOUND_STATUS_LABELS = Object.freeze({
@@ -389,6 +468,26 @@ function showRoute() {
 }
 
 function enterSignedOutState(statusMsg = "") {
+  ++mailboxEpoch;
+  cancelReconnect();
+
+  const opening = cacheReady;
+  const writes = pendingCacheWrites;
+
+  cacheDb = null;
+  cacheReady = Promise.resolve(null);
+  hasServerData = false;
+
+  cacheShutdown = Promise.allSettled([
+    opening,
+    writes,
+  ]).then(results => {
+    const opened = results[0];
+
+    if (opened.status === "fulfilled" && opened.value) {
+      opened.value.close();
+    }
+  });
   if (ws) {
     ws.onclose = null;
     ws.close();
@@ -422,6 +521,206 @@ function enterSignedOutState(statusMsg = "") {
   document.getElementById("authErr").textContent = statusMsg;
 }
 
+async function startMailbox(user, epoch) {
+  let db = null;
+
+  try {
+    db = await ASTMailStorage.open(user.id);
+
+    if (epoch !== mailboxEpoch) {
+      db.close();
+      return null;
+    }
+
+    cacheDb = db;
+
+    const cached = await ASTMailStorage.getMessages(db);
+
+    if (epoch !== mailboxEpoch) {
+      return db;
+    }
+
+    // Never overwrite live server data with older cache data.
+    if (!hasServerData) {
+      const messages = cached
+        .filter(m =>
+          typeof m.messageId === "string" &&
+          (m.folder === "inbox" || m.folder === "sent") &&
+          typeof m.sender === "string" &&
+          Array.isArray(m.recipients) &&
+          typeof m.subject === "string" &&
+          typeof m.body === "string" &&
+          typeof m.created_ms === "number"
+        )
+        .map(m => ({
+          ...m,
+          id: m.messageId,
+        }));
+
+      const newestFirst = (a, b) =>
+        b.created_ms - a.created_ms;
+
+      inboxItems = messages
+        .filter(m => m.folder === "inbox")
+        .sort(newestFirst);
+
+      sentItems = messages
+        .filter(m => m.folder === "sent")
+        .sort(newestFirst);
+
+      renderAllMail();
+    }
+
+    return db;
+  } catch (error) {
+    console.warn("ASTMail local cache unavailable:", error);
+
+    if (db) {
+      db.close();
+      if (cacheDb === db) cacheDb = null;
+    }
+
+    return null;
+  }
+}
+
+function connectMailboxSocket(epoch) {
+  if (epoch !== mailboxEpoch || !currentUser) return;
+
+  if (
+    ws &&
+    (ws.readyState === WebSocket.OPEN ||
+     ws.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  if (epoch !== mailboxEpoch || !currentUser) return;
+
+  const proto = location.protocol === "https:"
+    ? "wss://"
+    : "ws://";
+
+  const socket = new WebSocket(
+    `${proto}${location.host}/v1/ws`
+  );
+
+  ws = socket;
+  socket.binaryType = "arraybuffer";
+
+  socket.onopen = () => {
+    if (epoch !== mailboxEpoch || socket !== ws) return;
+
+    reconnectAttempt = 0;
+    cancelReconnect();
+
+    console.info("ASTMail WebSocket connected");
+  };
+
+  socket.onmessage = ev => {
+    if (epoch !== mailboxEpoch || socket !== ws) return;
+
+    let msgType;
+    let obj;
+
+    try {
+      const frame = unpackFrame(ev.data);
+      msgType = frame.msgType;
+      obj = decode(frame.payload);
+    } catch (error) {
+      console.error("Invalid ASTP response:", error);
+      socket.close(1002, "Invalid ASTP frame");
+      return;
+    }
+
+    if (msgType === MSG_SYNC) {
+      if (!Array.isArray(obj.inbox) ||
+          !Array.isArray(obj.sent)) {
+        socket.close(1002, "Invalid mailbox snapshot");
+        return;
+      }
+
+      hasServerData = true;
+
+      inboxItems = obj.inbox;
+      sentItems = obj.sent;
+      renderAllMail();
+
+      const inbox = obj.inbox;
+      const sent = obj.sent;
+
+      void queueCacheWrite(epoch, db =>
+        ASTMailStorage.replaceSnapshot(db, inbox, sent)
+      );
+
+      if (isSentRoute()) {
+        void refreshOutboundStatuses();
+      }
+
+    } else if (msgType === MSG_SEND) {
+      if (!obj || !["inbox", "sent"].includes(obj.folder) ||
+          typeof obj.id !== "string") {
+        socket.close(1002, "Invalid mail event");
+        return;
+      }
+
+      hasServerData = true;
+
+      const target = obj.folder === "inbox"
+        ? inboxItems
+        : sentItems;
+
+      const existing = target.findIndex(m => m.id === obj.id);
+
+      if (existing !== -1) {
+        target.splice(existing, 1);
+      }
+
+      target.unshift(obj);
+      renderAllMail();
+
+      const message = {
+        ...obj,
+        messageId: obj.id,
+        id: `${obj.folder}:${obj.id}`,
+      };
+
+      void queueCacheWrite(epoch, db =>
+        ASTMailStorage.saveMessage(db, message)
+      );
+
+      if (obj.folder === "sent" && isSentRoute()) {
+        void refreshOutboundStatuses();
+      }
+
+    } else if (msgType === MSG_ACK) {
+      const statusEl = document.getElementById("sendStatus");
+      statusEl.textContent = obj.message;
+
+      if (obj.ok) {
+        document.getElementById("subj").value = "";
+        document.getElementById("body").value = "";
+      }
+    }
+  };
+
+  socket.onclose = ev => {
+    if (epoch !== mailboxEpoch || socket !== ws) return;
+
+    ws = null;
+
+    if (ev.code === 4001 || ev.code === 4002) {
+      enterSignedOutState(ev.reason || "Session ended");
+      return;
+    }
+
+    document.getElementById("sendStatus").textContent =
+      "Disconnected. Reconnecting...";
+
+    scheduleReconnect(epoch);
+  };
+}
+
 function enterSignedInState(user) {
   currentUser = user;
   if (!user.is_admin) {
@@ -441,59 +740,16 @@ function enterSignedInState(user) {
   document.getElementById("appView").classList.remove("hidden");
   showRoute();
 
-  const proto = location.protocol === "https:" ? "wss://" : "ws://";
-  ws = new WebSocket(`${proto}${location.host}/v1/ws`);
-  ws.binaryType = "arraybuffer";
+  const epoch = ++mailboxEpoch;
 
+  hasServerData = false;
+  reconnectAttempt = 0;
+  pendingCacheWrites = Promise.resolve();
 
-  ws.onmessage = (ev) => {
-    const { msgType, payload } = unpackFrame(ev.data);
-    const obj = decode(payload);
+  cancelReconnect();
 
-    if (msgType === MSG_SYNC) {
-      inboxItems = obj.inbox;
-      sentItems = obj.sent;
-
-      renderAllMail();
-
-      // Refresh delivery statuses when Sent is open.
-      if (isSentRoute()) {
-        void refreshOutboundStatuses();
-      }
-
-    } else if (msgType === MSG_SEND) {
-      if (obj.folder === "inbox") {
-        inboxItems.unshift(obj);
-      } else {
-        sentItems.unshift(obj);
-      }
-
-      renderAllMail();
-
-      // Update status for newly queued outgoing mail.
-      if (obj.folder === "sent" && isSentRoute()) {
-        void refreshOutboundStatuses();
-      }
-
-    } else if (msgType === MSG_ACK) {
-      const statusEl = document.getElementById("sendStatus");
-      statusEl.textContent = obj.message;
-
-      if (obj.ok) {
-        document.getElementById("subj").value = "";
-        document.getElementById("body").value = "";
-      }
-    }
-  };
-
-
-  ws.onclose = (ev) => {
-    if (ev.code === 4001 || ev.code === 4002) {
-      enterSignedOutState(ev.reason || "Session ended");
-    } else {
-      document.getElementById("sendStatus").textContent = "Disconnected from server";
-    }
-  };
+  cacheReady = startMailbox(user, epoch);
+  connectMailboxSocket(epoch);
 }
 
 async function submitAuth() {
@@ -517,8 +773,32 @@ async function submitAuth() {
 }
 
 async function logout() {
-  await fetch("/api/logout", { method: "POST" });
-  enterSignedOutState();
+  try {
+    const response = await fetch("/api/logout", {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      throw new Error("Logout request failed");
+    }
+
+    const accountId = currentUser?.id;
+    enterSignedOutState();
+
+    await cacheShutdown;
+
+    if (accountId) {
+      try {
+        await ASTMailStorage.clearAccount(accountId);
+      } catch (error) {
+        console.warn("Unable to clear local mail cache:", error);
+      }
+    }
+  } catch (error) {
+    console.error("Logout failed:", error);
+    document.getElementById("sendStatus").textContent =
+      "Could not sign out";
+  }
 }
 
 async function deleteMailbox() {
